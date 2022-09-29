@@ -9,6 +9,7 @@ import os
 import re
 import requests
 import signal
+import ssl
 import subprocess
 import sys
 import urllib
@@ -220,6 +221,14 @@ def popen_forward_sigterm(args, *, stdin=None):
                         p.stdin.close()
                     os.waitid(os.P_PID, p.pid, os.WEXITED | os.WNOWAIT)
 
+class TLSAdapter(requests.adapters.HTTPAdapter):
+
+        def init_poolmanager(self, *args, **kwargs):
+            ctx = ssl.create_default_context()
+            ctx.options |= 0x4
+            kwargs['ssl_context'] = ctx
+            return super(TLSAdapter, self).init_poolmanager(*args, **kwargs)
+
 @click.command()
 @click.argument('gateway')
 @click.argument('openconnect-args', nargs=-1)
@@ -244,6 +253,7 @@ def main(gateway, openconnect_args, username, password, factor_priorities, totp_
         **dict(factor_priorities)}
 
     with requests.Session() as s:
+        s.mount('https://', TLSAdapter())
         saml_req_url = prelogin(s, gateway)
         saml_resp_url, saml_resp_data = okta_saml(s, saml_req_url, username, password, factor_priorities, totp_key)
         saml_username, prelogin_cookie = complete_saml(s, saml_resp_url, saml_resp_data)
