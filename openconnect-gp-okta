@@ -2,6 +2,7 @@
 
 import base64
 import click
+import configparser
 import contextlib
 import json
 import lxml.etree
@@ -222,17 +223,19 @@ def popen_forward_sigterm(args, *, stdin=None):
                     os.waitid(os.P_PID, p.pid, os.WEXITED | os.WNOWAIT)
 
 @click.command()
-@click.argument('gateway')
+@click.argument('gateway', required=False)
 @click.argument('openconnect-args', nargs=-1)
+@click.option('--config', default=None)
 @click.option('--username')
 @click.option('--password')
 @click.option('--password-cmd')
 @click.option('--factor-priority', 'factor_priorities', nargs=2, type=click.Tuple((str, int)), multiple=True)
 @click.option('--totp-key')
-@click.option('--sudo/--no-sudo', default=False)
+@click.option('--sudo/--no-sudo', default=None)
 def main(
     gateway,
     openconnect_args,
+    config,
     username,
     password,
     password_cmd,
@@ -240,8 +243,34 @@ def main(
     totp_key,
     sudo,
 ):
+    args = { k: v for k, v in locals().items() if v is not None }
+
+    conf = configparser.ConfigParser()
+    conf.optionxform = lambda opt: opt.replace('_', '-')
+    conf.read(config)
+
+    gateway = conf.get('common', 'gateway', vars=args, fallback=gateway)
+    openconnect_args += tuple(shlex.split(conf.get('common', 'openconnect-args', fallback="")))
+    username = conf.get('common', 'username', vars=args, fallback=username)
+    password = conf.get('common', 'password', vars=args, fallback=password)
+    password_cmd = conf.get('common', 'password-cmd', vars=args, fallback=password_cmd)
+    totp_key = conf.get('common', 'totp-key', vars=args, fallback=totp_key)
+    sudo = conf.get('common', 'sudo', vars=args, fallback=False)
+
+    if conf.has_section('factor-priority'):
+        factor_priorities += tuple(
+            map(
+                lambda x: (x[0], int(x[1])),
+                conf.items('factor-priority')
+            )
+        )
+
     if (totp_key is not None) and (pyotp is None):
         click.echo('--totp-key requires pyotp!', err=True)
+        sys.exit(1)
+
+    if gateway is None:
+        click.echo('No gateway provided', err=True)
         sys.exit(1)
 
     if username is None:
