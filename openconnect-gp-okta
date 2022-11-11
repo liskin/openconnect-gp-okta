@@ -8,6 +8,7 @@ import lxml.etree
 import os
 import re
 import requests
+import shlex
 import signal
 import subprocess
 import sys
@@ -225,16 +226,39 @@ def popen_forward_sigterm(args, *, stdin=None):
 @click.argument('openconnect-args', nargs=-1)
 @click.option('--username')
 @click.option('--password')
+@click.option('--password-cmd')
 @click.option('--factor-priority', 'factor_priorities', nargs=2, type=click.Tuple((str, int)), multiple=True)
 @click.option('--totp-key')
 @click.option('--sudo/--no-sudo', default=False)
-def main(gateway, openconnect_args, username, password, factor_priorities, totp_key, sudo):
+def main(
+    gateway,
+    openconnect_args,
+    username,
+    password,
+    password_cmd,
+    factor_priorities,
+    totp_key,
+    sudo,
+):
     if (totp_key is not None) and (pyotp is None):
         click.echo('--totp-key requires pyotp!', err=True)
         sys.exit(1)
 
     if username is None:
         username = click.prompt('Username')
+    if password_cmd is not None:
+        out = subprocess.run(shlex.split(password_cmd), capture_output=True, text=True)
+        output = out.stdout.splitlines()
+        if out.returncode != 0 or len(output) == 0:
+            click.echo(f"Password command failed with return status {out.returncode}:", err=True)
+            click.echo(out.stderr, nl=False, err=True)
+        else:
+            if len(output) > 1:
+                click.echo(
+                    "Password command produced more than"
+                    "one line of output, using the first one"
+                )
+            password = out.stdout.splitlines()[0]
     if password is None:
         password = click.prompt('Password', hide_input=True)
 
