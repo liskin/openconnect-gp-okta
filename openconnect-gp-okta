@@ -142,11 +142,18 @@ def okta_auth(s, domain, username, password, factor_priorities, totp_key):
         for factor in sorted(r['_embedded']['factors'], key=priority, reverse=True):
             if factor['factorType'] == 'push':
                 url = factor['_links']['verify']['href']
+                correct_answer = None
                 while True:
                     r = post_json(s, url, {'stateToken': r['stateToken']})
                     if r['status'] != 'MFA_CHALLENGE':
                         break
                     assert r['factorResult'] == 'WAITING'
+                    if correct_answer is None:
+                        try:
+                            correct_answer = r["_embedded"]["factor"]["_embedded"]["challenge"]["correctAnswer"]
+                            click.echo(f"Correct 3-number answer is: {correct_answer}")
+                        except KeyError:
+                            pass
                 break
             if factor['factorType'] == 'sms':
                 url = factor['_links']['verify']['href']
