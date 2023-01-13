@@ -241,7 +241,7 @@ class TLSAdapter(requests.adapters.HTTPAdapter):
 @click.command()
 @click.argument('gateway', required=False)
 @click.argument('openconnect-args', nargs=-1)
-@click.option('--config', default=None)
+@click.option('--config', default="")
 @click.option('--username')
 @click.option('--password')
 @click.option('--password-cmd')
@@ -271,7 +271,7 @@ def main(
     password = conf.get('common', 'password', vars=args, fallback=password)
     password_cmd = conf.get('common', 'password-cmd', vars=args, fallback=password_cmd)
     totp_key = conf.get('common', 'totp-key', vars=args, fallback=totp_key)
-    sudo = conf.get('common', 'sudo', vars=args, fallback=False)
+    sudo = conf.get('common', 'sudo', vars=args, fallback=False if sudo is None else sudo)
 
     if conf.has_section('factor-priority'):
         factor_priorities += tuple(
