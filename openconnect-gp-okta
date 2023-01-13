@@ -181,6 +181,8 @@ def okta_auth(s, domain, username, password, factor_priorities, totp_key):
         else:
             raise Exception('No supported authentication factors')
 
+    if r['status'] == 'LOCKED_OUT':
+        raise Exception('Locked out of Okta!')
     assert r['status'] == 'SUCCESS'
     return r['sessionToken']
 
