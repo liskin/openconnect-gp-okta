@@ -250,6 +250,7 @@ class TLSAdapter(requests.adapters.HTTPAdapter):
 @click.option('--totp-key')
 @click.option('--sudo/--no-sudo', default=False)
 @click.option('--allow-insecure-crypto/--no-allow-insecure-crypto', default=False)
+@click.option('--user-agent')
 def main(
     gateway,
     openconnect_args,
@@ -261,6 +262,7 @@ def main(
     totp_key,
     sudo,
     allow_insecure_crypto,
+    user_agent,
 ):
     args = { k: v for k, v in locals().items() if v is not None }
 
@@ -276,6 +278,7 @@ def main(
     totp_key = conf.get('common', 'totp-key', vars=args, fallback=totp_key)
     sudo = conf.get('common', 'sudo', vars=args, fallback=sudo)
     allow_insecure_crypto = conf.get('common', 'allow_insecure_crypto', vars=args, fallback=allow_insecure_crypto)
+    user_agent = conf.get('common', 'user_agent', vars=args, fallback=user_agent)
 
     if conf.has_section('factor-priority'):
         factor_priorities += tuple(
@@ -317,6 +320,7 @@ def main(
         **dict(factor_priorities)}
 
     with requests.Session() as s:
+        s.headers['User-Agent'] = 'PAN GlobalProtect' if user_agent is None else user_agent
         if allow_insecure_crypto:
             s.mount('https://', TLSAdapter())
         saml_req_url = prelogin(s, gateway)
