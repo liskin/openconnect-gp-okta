@@ -31,6 +31,13 @@ except ImportError:
     UserInteraction = object
 
 
+clientos_to_openconnect = {
+    'Linux': 'linux-64',
+    'Mac': 'mac-intel',
+    'Windows': 'win',
+}
+
+
 class ConsoleInteraction(UserInteraction):
     def prompt_up(self):
         """Called when the authenticator is awaiting a user presence check."""
@@ -118,8 +125,9 @@ def extract_form(html):
     return (form.attrib['action'],
         {inp.attrib['name']: inp.attrib['value'] for inp in form.findall('input')})
 
-def prelogin(s, gateway):
-    r = check(s.post('https://{}/ssl-vpn/prelogin.esp'.format(gateway)))
+def prelogin(s, gateway, clientos):
+    data = {'tmp': 'tmp', 'kerberos-support': 'yes', 'ipv6-support': 'yes', 'clientVer': 4100, 'clientos': clientos}
+    r = check(s.post('https://{}/ssl-vpn/prelogin.esp'.format(gateway), data=data))
     saml_req_html = base64.b64decode(lxml.etree.fromstring(r.content).find('saml-request').text)
     saml_req_url, saml_req_data = extract_form(saml_req_html)
     assert 'SAMLRequest' in saml_req_data
@@ -251,6 +259,7 @@ class TLSAdapter(requests.adapters.HTTPAdapter):
 @click.option('--sudo/--no-sudo', default=False)
 @click.option('--allow-insecure-crypto/--no-allow-insecure-crypto', default=False)
 @click.option('--user-agent')
+@click.option('--client-os', type=click.Choice(clientos_to_openconnect.keys()), default='Windows')
 def main(
     gateway,
     openconnect_args,
@@ -263,6 +272,7 @@ def main(
     sudo,
     allow_insecure_crypto,
     user_agent,
+    client_os,
 ):
     args = { k: v for k, v in locals().items() if v is not None }
 
@@ -279,6 +289,7 @@ def main(
     sudo = conf.get('common', 'sudo', vars=args, fallback=sudo)
     allow_insecure_crypto = conf.get('common', 'allow_insecure_crypto', vars=args, fallback=allow_insecure_crypto)
     user_agent = conf.get('common', 'user_agent', vars=args, fallback=user_agent)
+    client_os = conf.get('common', 'client_os', vars=args, fallback=client_os)
 
     if conf.has_section('factor-priority'):
         factor_priorities += tuple(
@@ -323,7 +334,7 @@ def main(
         s.headers['User-Agent'] = 'PAN GlobalProtect' if user_agent is None else user_agent
         if allow_insecure_crypto:
             s.mount('https://', TLSAdapter())
-        saml_req_url = prelogin(s, gateway)
+        saml_req_url = prelogin(s, gateway, client_os)
         saml_resp_url, saml_resp_data = okta_saml(s, saml_req_url, username, password, factor_priorities, totp_key)
         saml_username, prelogin_cookie = complete_saml(s, saml_resp_url, saml_resp_data)
 
@@ -331,6 +342,7 @@ def main(
         'openconnect',
         gateway,
         '--protocol=gp',
+        '--os=' + clientos_to_openconnect[client_os],
         '--user=' + saml_username,
         '--usergroup=gateway:prelogin-cookie',
         '--passwd-on-stdin'
