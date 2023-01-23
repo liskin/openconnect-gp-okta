@@ -138,7 +138,7 @@ def post_json(s, url, data):
         headers={'Content-Type': 'application/json'}))
     return r.json()
 
-def okta_auth(s, domain, username, password, factor_priorities, totp_key):
+def okta_auth(s, domain, username, password, factor_priorities, totp_code_gen):
     r = post_json(s, 'https://{}/api/v1/authn'.format(domain),
         {'username': username, 'password': password})
 
@@ -180,8 +180,8 @@ def okta_auth(s, domain, username, password, factor_priorities, totp_key):
                 break
             if re.match('token(?::|$)', factor['factorType']):
                 url = factor['_links']['verify']['href']
-                if (factor['factorType'] == 'token:software:totp') and (totp_key is not None):
-                    code = pyotp.TOTP(totp_key).now()
+                if factor['factorType'] == 'token:software:totp' and totp_code_gen is not None:
+                    code = totp_code_gen()
                 else:
                     code = click.prompt('One-time code for {} ({})'.format(factor['provider'], factor['vendorName']))
                 r = post_json(s, url, {'stateToken': r['stateToken'], 'passCode': code})
@@ -194,13 +194,13 @@ def okta_auth(s, domain, username, password, factor_priorities, totp_key):
     assert r['status'] == 'SUCCESS'
     return r['sessionToken']
 
-def okta_saml(s, saml_req_url, username, password, factor_priorities, totp_key):
+def okta_saml(s, saml_req_url, username, password, factor_priorities, totp_code_gen):
     domain = urllib.parse.urlparse(saml_req_url).netloc
 
     # Just to set DT cookie
     check(s.get(saml_req_url))
 
-    token = okta_auth(s, domain, username, password, factor_priorities, totp_key)
+    token = okta_auth(s, domain, username, password, factor_priorities, totp_code_gen)
 
     r = check(s.get('https://{}/login/sessionCookieRedirect'.format(domain),
         params={'token': token, 'redirectUrl': saml_req_url}))
@@ -211,6 +211,21 @@ def okta_saml(s, saml_req_url, username, password, factor_priorities, totp_key):
 def complete_saml(s, saml_resp_url, saml_resp_data):
     r = check(s.post(saml_resp_url, data=saml_resp_data))
     return r.headers['saml-username'], r.headers['prelogin-cookie']
+
+def eval_cmd(cmd, description):
+    out = subprocess.run(shlex.split(cmd), capture_output=True, text=True)
+    output = out.stdout.splitlines()
+    if out.returncode != 0 or len(output) == 0:
+        click.echo(f"{description} command failed with return status {out.returncode}:", err=True)
+        click.echo(out.stderr, nl=False, err=True)
+        sys.exit(1)
+    else:
+        if len(output) > 1:
+            click.echo(
+                "{description} command produced more than"
+                "one line of output, using the first one"
+            )
+        return out.stdout.splitlines()[0]
 
 @contextlib.contextmanager
 def signal_mask(how, mask):
@@ -256,6 +271,7 @@ class TLSAdapter(requests.adapters.HTTPAdapter):
 @click.option('--password-cmd')
 @click.option('--factor-priority', 'factor_priorities', nargs=2, type=click.Tuple((str, int)), multiple=True)
 @click.option('--totp-key')
+@click.option('--totp-cmd')
 @click.option('--sudo/--no-sudo', default=False)
 @click.option('--allow-insecure-crypto/--no-allow-insecure-crypto', default=False)
 @click.option('--user-agent')
@@ -269,6 +285,7 @@ def main(
     password_cmd,
     factor_priorities,
     totp_key,
+    totp_cmd,
     sudo,
     allow_insecure_crypto,
     user_agent,
@@ -286,6 +303,7 @@ def main(
     password = conf.get('common', 'password', vars=args, fallback=password)
     password_cmd = conf.get('common', 'password-cmd', vars=args, fallback=password_cmd)
     totp_key = conf.get('common', 'totp-key', vars=args, fallback=totp_key)
+    totp_cmd = conf.get('common', 'totp-key', vars=args, fallback=totp_cmd)
     sudo = conf.get('common', 'sudo', vars=args, fallback=sudo)
     allow_insecure_crypto = conf.get('common', 'allow_insecure_crypto', vars=args, fallback=allow_insecure_crypto)
     user_agent = conf.get('common', 'user_agent', vars=args, fallback=user_agent)
@@ -299,9 +317,14 @@ def main(
             )
         )
 
-    if (totp_key is not None) and (pyotp is None):
-        click.echo('--totp-key requires pyotp!', err=True)
-        sys.exit(1)
+    totp_code_gen = None
+    if totp_cmd is not None:
+        totp_code_gen = lambda: eval_cmd(totp_cmd, 'TOTP code')
+    if totp_key is not None:
+        if pyotp is None:
+            click.echo('--totp-key requires pyotp!', err=True)
+            sys.exit(1)
+        totp_code_gen = lambda: pyotp.TOTP(totp_key).now()
 
     if gateway is None:
         click.echo('No gateway provided', err=True)
@@ -310,18 +333,7 @@ def main(
     if username is None:
         username = click.prompt('Username')
     if password_cmd is not None:
-        out = subprocess.run(shlex.split(password_cmd), capture_output=True, text=True)
-        output = out.stdout.splitlines()
-        if out.returncode != 0 or len(output) == 0:
-            click.echo(f"Password command failed with return status {out.returncode}:", err=True)
-            click.echo(out.stderr, nl=False, err=True)
-        else:
-            if len(output) > 1:
-                click.echo(
-                    "Password command produced more than"
-                    "one line of output, using the first one"
-                )
-            password = out.stdout.splitlines()[0]
+        password = eval_cmd(password_cmd, 'Password')
     if password is None:
         password = click.prompt('Password', hide_input=True)
 
@@ -335,7 +347,7 @@ def main(
         if allow_insecure_crypto:
             s.mount('https://', TLSAdapter())
         saml_req_url = prelogin(s, gateway, client_os)
-        saml_resp_url, saml_resp_data = okta_saml(s, saml_req_url, username, password, factor_priorities, totp_key)
+        saml_resp_url, saml_resp_data = okta_saml(s, saml_req_url, username, password, factor_priorities, totp_code_gen)
         saml_username, prelogin_cookie = complete_saml(s, saml_resp_url, saml_resp_data)
 
     subprocess_args = [
