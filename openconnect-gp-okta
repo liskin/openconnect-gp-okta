@@ -273,6 +273,7 @@ class TLSAdapter(requests.adapters.HTTPAdapter):
 @click.option('--totp-key')
 @click.option('--totp-cmd')
 @click.option('--sudo/--no-sudo', default=False)
+@click.option('--pkexec/--no-pkexec', default=False)
 @click.option('--allow-insecure-crypto/--no-allow-insecure-crypto', default=False)
 @click.option('--user-agent')
 @click.option('--client-os', type=click.Choice(clientos_to_openconnect.keys()), default='Windows')
@@ -287,6 +288,7 @@ def main(
     totp_key,
     totp_cmd,
     sudo,
+    pkexec,
     allow_insecure_crypto,
     user_agent,
     client_os,
@@ -305,6 +307,7 @@ def main(
     totp_key = conf.get('common', 'totp-key', vars=args, fallback=totp_key)
     totp_cmd = conf.get('common', 'totp-key', vars=args, fallback=totp_cmd)
     sudo = conf.get('common', 'sudo', vars=args, fallback=sudo)
+    pkexec = conf.get('common', 'pkexec', vars=args, fallback=pkexec)
     allow_insecure_crypto = conf.get('common', 'allow_insecure_crypto', vars=args, fallback=allow_insecure_crypto)
     user_agent = conf.get('common', 'user_agent', vars=args, fallback=user_agent)
     client_os = conf.get('common', 'client_os', vars=args, fallback=client_os)
@@ -364,6 +367,8 @@ def main(
     subprocess_args.extend(openconnect_args)
     if sudo:
         subprocess_args = ['sudo'] + subprocess_args
+    if pkexec:
+        subprocess_args = ['pkexec', '--user', 'root'] + subprocess_args
 
     with popen_forward_sigterm(subprocess_args, stdin=subprocess.PIPE) as p:
         p.stdin.write(prelogin_cookie.encode())
