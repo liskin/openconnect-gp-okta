@@ -14,6 +14,7 @@ import signal
 import ssl
 import subprocess
 import sys
+import tempfile
 import urllib
 
 try:
@@ -227,34 +228,6 @@ def eval_cmd(cmd, description):
             )
         return out.stdout.splitlines()[0]
 
-@contextlib.contextmanager
-def signal_mask(how, mask):
-    old_mask = signal.pthread_sigmask(how, mask)
-    try:
-        yield old_mask
-    finally:
-        signal.pthread_sigmask(signal.SIG_SETMASK, old_mask)
-
-@contextlib.contextmanager
-def signal_handler(num, handler):
-    old_handler = signal.signal(num, handler)
-    try:
-        yield old_handler
-    finally:
-        signal.signal(num, old_handler)
-
-@contextlib.contextmanager
-def popen_forward_sigterm(args, *, stdin=None):
-    with signal_mask(signal.SIG_BLOCK, {signal.SIGTERM}) as old_mask:
-        with subprocess.Popen(args, stdin=stdin,
-                preexec_fn=lambda: signal.pthread_sigmask(signal.SIG_SETMASK, old_mask)) as p:
-            with signal_handler(signal.SIGTERM, lambda *args: p.terminate()):
-                with signal_mask(signal.SIG_SETMASK, old_mask):
-                    yield p
-                    if p.stdin:
-                        p.stdin.close()
-                    os.waitid(os.P_PID, p.pid, os.WEXITED | os.WNOWAIT)
-
 class TLSAdapter(requests.adapters.HTTPAdapter):
     def init_poolmanager(self, *args, **kwargs):
         ctx = ssl.create_default_context()
@@ -353,7 +326,7 @@ def main(
         saml_resp_url, saml_resp_data = okta_saml(s, saml_req_url, username, password, factor_priorities, totp_code_gen)
         saml_username, prelogin_cookie = complete_saml(s, saml_resp_url, saml_resp_data)
 
-    subprocess_args = [
+    cmd = [
         'openconnect',
         gateway,
         '--protocol=gp',
@@ -363,15 +336,21 @@ def main(
         '--passwd-on-stdin'
     ]
     if allow_insecure_crypto:
-        subprocess_args.append("--allow-insecure-crypto")
-    subprocess_args.extend(openconnect_args)
+        cmd.append("--allow-insecure-crypto")
+    cmd.extend(openconnect_args)
     if sudo:
-        subprocess_args = ['sudo'] + subprocess_args
+        cmd = ['sudo'] + cmd
     if pkexec:
-        subprocess_args = ['pkexec', '--user', 'root'] + subprocess_args
+        cmd = ['pkexec', '--user', 'root'] + cmd
 
-    with popen_forward_sigterm(subprocess_args, stdin=subprocess.PIPE) as p:
-        p.stdin.write(prelogin_cookie.encode())
-    sys.exit(p.returncode)
+    print(f"Launching {' '.join(map(shlex.quote, cmd))} <<<{shlex.quote(prelogin_cookie)}")
+    with tempfile.TemporaryFile('w+') as tf:
+        tf.write(prelogin_cookie)
+        tf.flush()
+        tf.seek(0)
+        # redirect stdin from this file, before it is closed by the context manager
+        # (it will remain accessible via the open file descriptor)
+        os.dup2(tf.fileno(), 0)
+    os.execvp(cmd[0], cmd)
 
 main()
