@@ -126,9 +126,10 @@ def extract_form(html):
     return (form.attrib['action'],
         {inp.attrib['name']: inp.attrib['value'] for inp in form.findall('input')})
 
-def prelogin(s, gateway, clientos):
+def prelogin(s, gateway, clientos, interface):
+    if2prelogin = {'portal': 'global-protect/prelogin.esp', 'gateway': 'ssl-vpn/prelogin.esp'}
     data = {'tmp': 'tmp', 'kerberos-support': 'yes', 'ipv6-support': 'yes', 'clientVer': 4100, 'clientos': clientos}
-    r = check(s.post('https://{}/ssl-vpn/prelogin.esp'.format(gateway), data=data))
+    r = check(s.post(f'https://{gateway}/{if2prelogin[interface]}', data=data))
     saml_req_html = base64.b64decode(lxml.etree.fromstring(r.content).find('saml-request').text)
     saml_req_url, saml_req_data = extract_form(saml_req_html)
     assert 'SAMLRequest' in saml_req_data
@@ -211,7 +212,12 @@ def okta_saml(s, saml_req_url, username, password, factor_priorities, totp_code_
 
 def complete_saml(s, saml_resp_url, saml_resp_data):
     r = check(s.post(saml_resp_url, data=saml_resp_data))
-    return r.headers['saml-username'], r.headers['prelogin-cookie']
+    if 'prelogin-cookie' in r.headers:
+        return r.headers['saml-username'], 'prelogin-cookie', r.headers['prelogin-cookie']
+    elif 'portal-userauthcookie' in r.headers:
+        return r.headers['saml-username'], 'portal-userauthcookie', r.headers['portal-userauthcookie']
+    else:
+        raise Exception(f'Expected prelogin-cookie or portal-userauthcookie in {r.headers}')
 
 def eval_cmd(cmd, description):
     out = subprocess.run(shlex.split(cmd), capture_output=True, text=True)
@@ -250,6 +256,8 @@ class TLSAdapter(requests.adapters.HTTPAdapter):
 @click.option('--allow-insecure-crypto/--no-allow-insecure-crypto', default=False)
 @click.option('--user-agent')
 @click.option('--client-os', type=click.Choice(clientos_to_openconnect.keys()), default='Windows')
+@click.option('--gateway', 'interface', flag_value='gateway', default=True)
+@click.option('--portal', 'interface', flag_value='portal')
 def main(
     gateway,
     openconnect_args,
@@ -265,6 +273,7 @@ def main(
     allow_insecure_crypto,
     user_agent,
     client_os,
+    interface,
 ):
     args = { k: v for k, v in locals().items() if v is not None }
 
@@ -284,6 +293,7 @@ def main(
     allow_insecure_crypto = conf.get('common', 'allow_insecure_crypto', vars=args, fallback=allow_insecure_crypto)
     user_agent = conf.get('common', 'user_agent', vars=args, fallback=user_agent)
     client_os = conf.get('common', 'client_os', vars=args, fallback=client_os)
+    interface = conf.get('common', 'interface', vars=args, fallback=interface)
 
     if conf.has_section('factor-priority'):
         factor_priorities += tuple(
@@ -322,9 +332,9 @@ def main(
         s.headers['User-Agent'] = 'PAN GlobalProtect' if user_agent is None else user_agent
         if allow_insecure_crypto:
             s.mount('https://', TLSAdapter())
-        saml_req_url = prelogin(s, gateway, client_os)
+        saml_req_url = prelogin(s, gateway, client_os, interface)
         saml_resp_url, saml_resp_data = okta_saml(s, saml_req_url, username, password, factor_priorities, totp_code_gen)
-        saml_username, prelogin_cookie = complete_saml(s, saml_resp_url, saml_resp_data)
+        saml_username, cookie_name, cookie_value = complete_saml(s, saml_resp_url, saml_resp_data)
 
     cmd = [
         'openconnect',
@@ -332,7 +342,7 @@ def main(
         '--protocol=gp',
         '--os=' + clientos_to_openconnect[client_os],
         '--user=' + saml_username,
-        '--usergroup=gateway:prelogin-cookie',
+        '--usergroup=' + interface + ':' + cookie_name,
         '--passwd-on-stdin'
     ]
     if allow_insecure_crypto:
@@ -343,9 +353,9 @@ def main(
     if pkexec:
         cmd = ['pkexec', '--user', 'root'] + cmd
 
-    print(f"Launching {' '.join(map(shlex.quote, cmd))} <<<{shlex.quote(prelogin_cookie)}")
+    print(f"Launching {' '.join(map(shlex.quote, cmd))} <<<{shlex.quote(cookie_value)}")
     with tempfile.TemporaryFile('w+') as tf:
-        tf.write(prelogin_cookie)
+        tf.write(cookie_value)
         tf.flush()
         tf.seek(0)
         # redirect stdin from this file, before it is closed by the context manager
