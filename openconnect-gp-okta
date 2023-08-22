@@ -232,6 +232,21 @@ def popen_forward_sigterm(args, *, stdin=None):
                         p.stdin.close()
                     os.waitid(os.P_PID, p.pid, os.WEXITED | os.WNOWAIT)
 
+def run_cmd(cmd, confvar):
+    out = subprocess.run(shlex.split(cmd), capture_output=True, text=True)
+    output = out.stdout.splitlines()
+    if out.returncode != 0 or len(output) == 0:
+        click.echo(f"{confvar} command failed with return status {out.returncode}:", err=True)
+        click.echo(out.stderr, nl=False, err=True)
+    else:
+        if len(output) > 1:
+            click.echo(
+                "{confvar} command produced more than"
+                "one line of output, using the first one"
+            )
+        return out.stdout.splitlines()[0]
+    return None
+
 class TLSAdapter(requests.adapters.HTTPAdapter):
 
         def init_poolmanager(self, *args, **kwargs):
@@ -249,6 +264,7 @@ class TLSAdapter(requests.adapters.HTTPAdapter):
 @click.option('--password-cmd')
 @click.option('--factor-priority', 'factor_priorities', nargs=2, type=click.Tuple((str, int)), multiple=True)
 @click.option('--totp-key')
+@click.option('--totp-key-cmd')
 @click.option('--sudo/--no-sudo', default=None)
 def main(
     gateway,
@@ -259,6 +275,7 @@ def main(
     password_cmd,
     factor_priorities,
     totp_key,
+    totp_key_cmd,
     sudo,
 ):
     args = { k: v for k, v in locals().items() if v is not None }
@@ -273,6 +290,7 @@ def main(
     password = conf.get('common', 'password', vars=args, fallback=password)
     password_cmd = conf.get('common', 'password-cmd', vars=args, fallback=password_cmd)
     totp_key = conf.get('common', 'totp-key', vars=args, fallback=totp_key)
+    totp_key_cmd = conf.get('common', 'totp-key-cmd', vars=args, fallback=totp_key)
     sudo = conf.get('common', 'sudo', vars=args, fallback=False if sudo is None else sudo)
 
     if conf.has_section('factor-priority'):
@@ -283,6 +301,8 @@ def main(
             )
         )
 
+    if (totp_key_cmd is not None):
+        totp_key = run_cmd(totp_key_cmd, "TOTP")
     if (totp_key is not None) and (pyotp is None):
         click.echo('--totp-key requires pyotp!', err=True)
         sys.exit(1)
@@ -294,18 +314,7 @@ def main(
     if username is None:
         username = click.prompt('Username')
     if password_cmd is not None:
-        out = subprocess.run(shlex.split(password_cmd), capture_output=True, text=True)
-        output = out.stdout.splitlines()
-        if out.returncode != 0 or len(output) == 0:
-            click.echo(f"Password command failed with return status {out.returncode}:", err=True)
-            click.echo(out.stderr, nl=False, err=True)
-        else:
-            if len(output) > 1:
-                click.echo(
-                    "Password command produced more than"
-                    "one line of output, using the first one"
-                )
-            password = out.stdout.splitlines()[0]
+        password = run_cmd(password_cmd, "Password")
     if password is None:
         password = click.prompt('Password', hide_input=True)
 
