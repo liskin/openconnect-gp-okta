@@ -241,7 +241,7 @@ def run_cmd(cmd, confvar):
     else:
         if len(output) > 1:
             click.echo(
-                "{confvar} command produced more than"
+                f"{confvar} command produced more than"
                 "one line of output, using the first one"
             )
         return out.stdout.splitlines()[0]
