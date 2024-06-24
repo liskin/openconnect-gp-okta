@@ -53,6 +53,7 @@ class ConsoleInteraction(UserInteraction):
         click.echo("User Verification requested.")
         return True
 
+
 class OktaWebauthn:
     # Not using factor['_links']['verify']['href'] as multiple
     # webauthn devices may exist and Okta has an alternative
@@ -119,10 +120,13 @@ def check(r):
     r.raise_for_status()
     return r
 
+
 def extract_form(html):
     form = lxml.etree.fromstring(html, lxml.etree.HTMLParser()).find('.//form')
-    return (form.attrib['action'],
+    return (
+        form.attrib['action'],
         {inp.attrib['name']: inp.attrib['value'] for inp in form.findall('input')})
+
 
 def prelogin(s, gateway, clientos, interface):
     if2prelogin = {'portal': 'global-protect/prelogin.esp', 'gateway': 'ssl-vpn/prelogin.esp'}
@@ -133,13 +137,17 @@ def prelogin(s, gateway, clientos, interface):
     assert 'SAMLRequest' in saml_req_data
     return saml_req_url + '?' + urllib.parse.urlencode(saml_req_data)
 
+
 def post_json(s, url, data):
-    r = check(s.post(url, data=json.dumps(data),
+    r = check(s.post(
+        url, data=json.dumps(data),
         headers={'Content-Type': 'application/json'}))
     return r.json()
 
+
 def okta_auth(s, domain, username, password, factor_priorities, totp_code_gen):
-    r = post_json(s, 'https://{}/api/v1/authn'.format(domain),
+    r = post_json(
+        s, 'https://{}/api/v1/authn'.format(domain),
         {'username': username, 'password': password})
 
     if r['status'] == 'MFA_REQUIRED':
@@ -194,6 +202,7 @@ def okta_auth(s, domain, username, password, factor_priorities, totp_code_gen):
     assert r['status'] == 'SUCCESS'
     return r['sessionToken']
 
+
 def okta_saml(s, saml_req_url, username, password, factor_priorities, totp_code_gen):
     domain = urllib.parse.urlparse(saml_req_url).netloc
 
@@ -202,11 +211,13 @@ def okta_saml(s, saml_req_url, username, password, factor_priorities, totp_code_
 
     token = okta_auth(s, domain, username, password, factor_priorities, totp_code_gen)
 
-    r = check(s.get('https://{}/login/sessionCookieRedirect'.format(domain),
+    r = check(s.get(
+        'https://{}/login/sessionCookieRedirect'.format(domain),
         params={'token': token, 'redirectUrl': saml_req_url}))
     saml_resp_url, saml_resp_data = extract_form(r.content)
     assert 'SAMLResponse' in saml_resp_data
     return saml_resp_url, saml_resp_data
+
 
 def complete_saml(s, saml_resp_url, saml_resp_data):
     r = check(s.post(saml_resp_url, data=saml_resp_data))
@@ -216,6 +227,7 @@ def complete_saml(s, saml_resp_url, saml_resp_data):
         return r.headers['saml-username'], 'portal-userauthcookie', r.headers['portal-userauthcookie']
     else:
         raise Exception(f'Expected prelogin-cookie or portal-userauthcookie in {r.headers}')
+
 
 def eval_cmd(cmd, description):
     out = subprocess.run(shlex.split(cmd), capture_output=True, text=True)
@@ -232,12 +244,14 @@ def eval_cmd(cmd, description):
             )
         return out.stdout.splitlines()[0]
 
+
 class TLSAdapter(requests.adapters.HTTPAdapter):
     def init_poolmanager(self, *args, **kwargs):
         ctx = ssl.create_default_context()
-        ctx.options |= 1<<2  # OP_LEGACY_SERVER_CONNECT
+        ctx.options |= 1 << 2  # OP_LEGACY_SERVER_CONNECT
         kwargs['ssl_context'] = ctx
         return super(TLSAdapter, self).init_poolmanager(*args, **kwargs)
+
 
 @click.command()
 @click.argument('gateway', required=False)
@@ -273,7 +287,7 @@ def main(
     client_os,
     interface,
 ):
-    args = { k: v for k, v in locals().items() if v is not None }
+    args = {k: v for k, v in locals().items() if v is not None}
 
     conf = configparser.ConfigParser()
     conf.optionxform = lambda opt: opt.replace('_', '-')
@@ -303,12 +317,12 @@ def main(
 
     totp_code_gen = None
     if totp_cmd is not None:
-        totp_code_gen = lambda: eval_cmd(totp_cmd, 'TOTP code')
+        totp_code_gen = lambda: eval_cmd(totp_cmd, 'TOTP code')  # noqa: E731
     if totp_key is not None:
         if pyotp is None:
             click.echo('--totp-key requires pyotp!', err=True)
             sys.exit(1)
-        totp_code_gen = lambda: pyotp.TOTP(totp_key).now()
+        totp_code_gen = lambda: pyotp.TOTP(totp_key).now()  # noqa: E731
 
     if gateway is None:
         click.echo('No gateway provided', err=True)
@@ -360,5 +374,6 @@ def main(
         # (it will remain accessible via the open file descriptor)
         os.dup2(tf.fileno(), 0)
     os.execvp(cmd[0], cmd)
+
 
 main()
