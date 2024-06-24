@@ -3,14 +3,12 @@
 import base64
 import click
 import configparser
-import contextlib
 import json
 import lxml.etree
 import os
 import re
 import requests
 import shlex
-import signal
 import ssl
 import subprocess
 import sys
