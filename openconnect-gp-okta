@@ -299,7 +299,7 @@ def main(
     password = conf.get('common', 'password', vars=args, fallback=password)
     password_cmd = conf.get('common', 'password-cmd', vars=args, fallback=password_cmd)
     totp_key = conf.get('common', 'totp-key', vars=args, fallback=totp_key)
-    totp_cmd = conf.get('common', 'totp-key', vars=args, fallback=totp_cmd)
+    totp_cmd = conf.get('common', 'totp-cmd', vars=args, fallback=totp_cmd)
     sudo = conf.get('common', 'sudo', vars=args, fallback=sudo)
     pkexec = conf.get('common', 'pkexec', vars=args, fallback=pkexec)
     allow_insecure_crypto = conf.get('common', 'allow_insecure_crypto', vars=args, fallback=allow_insecure_crypto)
