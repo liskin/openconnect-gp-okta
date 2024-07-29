@@ -239,7 +239,7 @@ def eval_cmd(cmd, description):
     else:
         if len(output) > 1:
             click.echo(
-                "{description} command produced more than"
+                f"{description} command produced more than"
                 "one line of output, using the first one"
             )
         return out.stdout.splitlines()[0]
